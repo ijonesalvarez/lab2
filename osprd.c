@@ -121,16 +121,16 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 
 	// Your code here.
 	
-        int size = req->current_nr_sector;
-        int offset = req->sector * SECTOR_SIZE
+        int size = req->current_nr_sectors * SECTOR_SIZE;;
+        int offset = req->sector * SECTOR_SIZE;
 
         if (rq_data_dir(req) == READ)
         {
            memcpy(req->buffer, d->data + offset, size); 
         }     
-        else if (re_data_dir(req) == WRITE)
+        else if (rq_data_dir(req) == WRITE)
         {
-           memcpy(d->data + offset, req->buffer, size)
+           memcpy(d->data + offset, req->buffer, size);
         } 
         else
         {
