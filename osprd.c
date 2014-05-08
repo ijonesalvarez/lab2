@@ -34,7 +34,6 @@
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("CS 111 RAM Disk");
 MODULE_AUTHOR("Israel Jones-Alvarez, Omar Leyva");
-
 #define OSPRD_MAJOR	222
 
 /* This module parameter controls how big the disk will be.
@@ -64,6 +63,9 @@ typedef struct osprd_info {
 	/* HINT: You may want to add additional fields to help
 	         in detecting deadlock. */
 
+        int readLock;
+        int writeLock;
+
 	// The following elements are used internally; you don't need
 	// to understand them.
 	struct request_queue *queue;    // The device request queue.
@@ -85,6 +87,19 @@ static osprd_info_t osprds[NOSPRD];
  *   If not, return NULL.
  */
 static osprd_info_t *file2osprd(struct file *filp);
+
+
+void checkLocks(struct file *filp, osprd_info_t *d)
+{
+   int filp_writable = filp->f_mode & FMODE_WRITE;
+   if (file2osprd(filp) == 0)
+       return;
+   else if ((filp->f_flags & F_OSPRD_LOCKED) != 0 && filp_writable)
+       d->writeLock = 1;
+   else if ((filp->f_flags & F_OSPRD_LOCKED) != 0 && !filp_writable)
+       d->readLock = 1;
+}
+
 
 /*
  * for_each_open_file(task, callback, user_data)
@@ -236,8 +251,19 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// be protected by a spinlock; which ones?)
 
 		// Your code here (instead of the next two lines).
-		eprintk("Attempting to acquire\n");
-		r = -ENOTTY;
+		
+                for_each_open_file(current,checkLocks,d);
+                if (d->readLock == 1 || d->writeLock == 1)
+                {
+                    prepare_to_wait_exclusive(&d->blockq,&wait,
+                                                   TASK_INTERRUPTIBLE);
+                    schedule();
+                }
+                else if (d->readLock == 0 && d->writeLock == 0)
+                {
+                    osp_spin_lock(&d->mutex);
+                    finish_wait(&d->blockq,&wait);
+                }
 
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
 
@@ -279,6 +305,7 @@ static void osprd_setup(osprd_info_t *d)
 	osp_spin_lock_init(&d->mutex);
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
+        DEFINE_WAIT(wait);
 }
 
 
