@@ -59,7 +59,7 @@ typedef struct osprd_info {
 
 	wait_queue_head_t blockq;       // Wait queue for tasks blocked on
 					// the device lock
-
+        wait_queue_t wait;
 	/* HINT: You may want to add additional fields to help
 	         in detecting deadlock. */
 
@@ -255,14 +255,14 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
                 for_each_open_file(current,checkLocks,d);
                 if (d->readLock == 1 || d->writeLock == 1)
                 {
-                    prepare_to_wait_exclusive(&d->blockq,&wait,
+                    prepare_to_wait_exclusive(&d->blockq,&d->wait,
                                                    TASK_INTERRUPTIBLE);
                     schedule();
                 }
                 else if (d->readLock == 0 && d->writeLock == 0)
                 {
                     osp_spin_lock(&d->mutex);
-                    finish_wait(&d->blockq,&wait);
+                    finish_wait(&d->blockq,&d->wait);
                 }
 
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
@@ -305,7 +305,7 @@ static void osprd_setup(osprd_info_t *d)
 	osp_spin_lock_init(&d->mutex);
 	d->ticket_head = d->ticket_tail = 0;
 	/* Add code here if you add fields to osprd_info_t. */
-        DEFINE_WAIT(wait);
+        init_wait(&d->wait);
 }
 
 
