@@ -42,6 +42,13 @@ MODULE_AUTHOR("Israel Jones-Alvarez, Omar Leyva");
 static int nsectors = 32;
 module_param(nsectors, int, 0);
 
+struct pidList
+{
+   pid_t pid;
+   struct pidList* next;
+};
+
+typedef struct pidList* pidList_t;
 
 /* The internal representation of our device. */
 typedef struct osprd_info {
@@ -65,6 +72,10 @@ typedef struct osprd_info {
 
         int readLock;
         int writeLock;
+       
+        pidList_t pidWaiting;
+
+        unsigned int deadlock;     
 
 	// The following elements are used internally; you don't need
 	// to understand them.
@@ -137,7 +148,7 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 
 	// Your code here.
 	
-        int size = req->current_nr_sectors * SECTOR_SIZE;;
+        int size = req->current_nr_sectors * SECTOR_SIZE;
         int offset = req->sector * SECTOR_SIZE;
 
         if (rq_data_dir(req) == READ)
@@ -154,6 +165,14 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
         }
  
 	end_request(req, 1);
+}
+
+void checkDeadlock(struct file *filp, osprd_info_t *d)
+{
+   if (file2osprd(filp) == d)
+   {
+      d->deadlock++;
+   }
 }
 
 
@@ -190,6 +209,7 @@ static int osprd_close_last(struct inode *inode, struct file *filp)
 		      d->writeLock = 0;
 		    else
 		      d->readLock--;
+                    d->deadlock = 0;
 		    filp->f_flags &=~F_OSPRD_LOCKED;
 		    wake_up_all(&d->blockq);	
 		    //printk("w: %d, r: %d, t: %d\n",d->writeLock,d->readLock,d->ticket_tail);
@@ -263,12 +283,18 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		// Your code here (instead of the next two lines).
 
-	  //printk("Writing? %d\n", filp_writable); 
+	   //printk("Writing? %d\n", filp_writable); 
 	  
-	  osp_spin_lock(&d->mutex);
-	  unsigned ticket = d->ticket_head++;
-	  osp_spin_unlock(&d->mutex);
-	  
+	   osp_spin_lock(&d->mutex);
+	   unsigned ticket = d->ticket_head++;
+	   osp_spin_unlock(&d->mutex);
+	 
+           for_each_open_file(current, checkDeadlock, d);
+           printk ("deadlock: %d \n", d->deadlock);
+           printk ("locked: %d \n",  (filp->f_flags & F_OSPRD_LOCKED));
+           if (d->deadlock >= 2 && (filp->f_flags & F_OSPRD_LOCKED) == F_OSPRD_LOCKED)
+                return -EDEADLK;
+           
            if (filp_writable)
            {
               printk("Request Write Lock\n"); 		
@@ -284,8 +310,8 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		//	d->ticket_head++;
 		osp_spin_unlock(&d->mutex);	
 		printk("write lock already granted\n");
-		
-		  wait_event_interruptible(d->blockq,d->writeLock == 0 && d->readLock == 0 && ticket == d->ticket_tail);
+	
+                wait_event_interruptible(d->blockq,d->writeLock == 0 && d->readLock == 0 && ticket == d->ticket_tail);
 		printk("event in queue\n");
 		
       	
@@ -297,12 +323,15 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		printk("signal wait\n");
               } 	      
 	      
+              d->deadlock = 0;
               if (d->readLock == 0 && d->writeLock == 0 && ticket == d->ticket_tail)
 		{		
                  
 		  d->ticket_tail++;
 		  d->writeLock = 1;
                   filp->f_flags |= F_OSPRD_LOCKED;
+                  printk ("locked: %d \n",  (filp->f_flags & F_OSPRD_LOCKED));
+
                   //finish_wait(&d->blockq,&d->wait);
                   osp_spin_unlock(&d->mutex);
 		  printk("Write lock aquired!\n");
@@ -423,6 +452,8 @@ static void osprd_setup(osprd_info_t *d)
         init_wait(&d->wait);
         d->readLock = 0;
         d->writeLock = 0;
+        d->pidWaiting = NULL;
+        d->deadlock; 
 }
 
 
