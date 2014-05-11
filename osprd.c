@@ -66,9 +66,6 @@ typedef struct osprd_info {
         int readLock;
         int writeLock;
 
-        unsigned int num_readers;
-        unsigned int num_writers;
-
 	// The following elements are used internally; you don't need
 	// to understand them.
 	struct request_queue *queue;    // The device request queue.
@@ -94,6 +91,7 @@ static osprd_info_t *file2osprd(struct file *filp);
 
 void checkLocks(struct file *filp, osprd_info_t *d)
 {
+   printk("checkLocks");
    int filp_writable = filp->f_mode & FMODE_WRITE;
    if (file2osprd(filp) == 0)
        return;
@@ -128,7 +126,7 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 		end_request(req, 0);
 		return;
 	}
-
+       
 	// EXERCISE: Perform the read or write request by copying data between
 	// our data array and the request's buffer.
 	// Hint: The 'struct request' argument tells you what kind of request
@@ -212,8 +210,8 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	int filp_writable = (filp->f_mode & FMODE_WRITE) != 0;
 
 	// Set 'r' to the ioctl's return value: 0 on success, negative on error
-        for_each_open_file(current,checkLocks,d);
-        printk("ioctl called read: %d write: %d", d->readLock, d->writeLock);
+        //for_each_open_file(current,checkLocks,d);
+        printk("ioctl called read: %d write: %d\n", d->readLock, d->writeLock);
 	if (cmd == OSPRDIOCACQUIRE) {
 
 		// EXERCISE: Lock the ramdisk.
@@ -253,46 +251,70 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		// Your code here (instead of the next two lines).
 
-       
+           printk("Writing? %d\n", filp_writable); 
+           osp_spin_lock(&d->mutex);
+          
+           unsigned ticket = d->ticket_head;
+           d->ticket_head++;
+
            if (filp_writable) 
            {
-              printk("Request Write Lock"); 		
-              if (d->readLock != 0 || d->writeLock == 1)
+              printk("Request Write Lock\n"); 		
+
+              while (d->readLock != 0 || d->writeLock == 1 || 
+                                      ticket != d->ticket_tail)
               {
-                  printk("write lock already granted");
-                  prepare_to_wait_exclusive(&d->blockq,&d->wait,
-                                              TASK_INTERRUPTIBLE);
+                  printk("write lock already granted\n");
+                  //prepare_to_wait_exclusive(&d->blockq,&d->wait,
+                  //                            TASK_INTERRUPTIBLE);
+                  printk("release mutex\n");
+                  osp_spin_unlock(&d->mutex);
+                  printk("block!\n");
                   schedule();
+                  printk("schedule\n");
                   if (signal_pending(current) == 1) 
                       return -ERESTARTSYS;
-              }
-              else if (d->readLock == 0 && d->writeLock == 0)
-              {
+                  printk("signal wait\n");
                   osp_spin_lock(&d->mutex);
-                  d->writeLock = 1;
-                  finish_wait(&d->blockq,&d->wait);
-                  osp_spin_unlock(&d->mutex);
               }
+          
+              if (d->readLock == 0 && d->writeLock == 0)
+              {
+                  printk("Write lock aquired\n");
+                  d->writeLock = 1;
+                  filp->f_flags |= F_OSPRD_LOCKED;
+                  //finish_wait(&d->blockq,&d->wait);
+                  //osp_spin_unlock(&d->mutex);
+              }
+ 
+
            }
            
-           if (!filp_writable)
+           else if (!filp_writable)
            {
-              printk("Request Read Lock");
-              if (d->writeLock == 1)
+              printk("Request Read Lock\n");
+
+              while (d->writeLock == 1 || ticket != d->ticket_tail)
               {
-                  prepare_to_wait_exclusive(&d->blockq,&d->wait,
-                                              TASK_INTERRUPTIBLE);
+                  //prepare_to_wait_exclusive(&d->blockq,&d->wait,
+                  //                            TASK_INTERRUPTIBLE);i
+                  osp_spin_unlock(&d->mutex);
                   schedule();
+                  if (signal_pending(current) == 1)
+                      return -ERESTARTSYS;
+                  osp_spin_lock(&d->mutex);
               }
-              else
+ 
+              if (d->writeLock == 0)
               {
-                 osp_spin_lock(&d->mutex);
                  d->readLock++;
                  filp->f_flags |= F_OSPRD_LOCKED;
-                 finish_wait(&d->blockq,&d->wait);
-                 osp_spin_unlock(&d->mutex);
-              }              
+                 //finish_wait(&d->blockq,&d->wait);
+              }             
+
            }
+           d->ticket_tail++;
+           osp_spin_unlock(&d->mutex);
 
 	} else if (cmd == OSPRDIOCTRYACQUIRE) {
 
@@ -304,10 +326,12 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Otherwise, if we can grant the lock request, return 0.
 
 		// Your code here (instead of the next two lines).
+            printk("trying!\n");
             if (d->readLock != 0 || d->writeLock != 0)
                 r = -EBUSY;
             else
-            {   osp_spin_lock(&d->mutex); 
+            {   
+                osp_spin_lock(&d->mutex); 
                 d->writeLock = 1;
                 filp->f_flags |= F_OSPRD_LOCKED;
                 osp_spin_unlock(&d->mutex);
@@ -322,12 +346,14 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// you need, and return 0.
 
 		// Your code here (instead of the next line).
+                printk("release the lock!\n");
                 osp_spin_lock(&d->mutex);
                 if (filp_writable)
                    d->writeLock = 0;
                 else
                    d->readLock--;
                 filp->f_flags &= ~F_OSPRD_LOCKED;
+                //finish_wait(&d->blockq,&d->wait);
                 osp_spin_unlock(&d->mutex);     
 	} else
 		r = -ENOTTY; /* unknown command */
