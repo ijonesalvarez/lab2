@@ -263,12 +263,12 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 
 		// Your code here (instead of the next two lines).
 
-           printk("Writing? %d\n", filp_writable); 
-	   
-	   osp_spin_lock(&d->mutex);
-           unsigned ticket = d->ticket_head++;
-	   osp_spin_unlock(&d->mutex);
-	   
+	  //printk("Writing? %d\n", filp_writable); 
+	  
+	  osp_spin_lock(&d->mutex);
+	  unsigned ticket = d->ticket_head++;
+	  osp_spin_unlock(&d->mutex);
+	  
            if (filp_writable)
            {
               printk("Request Write Lock\n"); 		
@@ -280,19 +280,16 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		    printk("time to acquire!\n");
 		    break;
 		  }
-		printk("ioctl called");
 			       
 		//	d->ticket_head++;
-		osp_spin_unlock(&d->mutex);
-		printk("ticket: %d", ticket);
+		osp_spin_unlock(&d->mutex);	
 		printk("write lock already granted\n");
-		printk("w: %d, r: %d, t: %d\n",d->writeLock,d->readLock,ticket);
 		
 		  wait_event_interruptible(d->blockq,d->writeLock == 0 && d->readLock == 0 && ticket == d->ticket_tail);
 		printk("event in queue\n");
 		
       	
-		printk("block!\n");
+		//printk("block!\n");
 		//schedule();
 		printk("schedule\n");
 		if (signal_pending(current) == 1) 
@@ -308,7 +305,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
                   filp->f_flags |= F_OSPRD_LOCKED;
                   //finish_wait(&d->blockq,&d->wait);
                   osp_spin_unlock(&d->mutex);
-		  printk("Write lock aquired after unlock?\n");
+		  printk("Write lock aquired!\n");
 		}
  
 
@@ -320,26 +317,24 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	      
 	      while (1){                                                              
 		osp_spin_lock(&d->mutex);
-		printk("t: %d, tt: %d",ticket,d->ticket_tail);
                 if(d->writeLock == 0 && ticket == d->ticket_tail) 
                   {                                                                   
                     printk("time to acquire!\n");                                     
                     break;                                                            
-                  }                                                                   
-                printk("ioctl called");    
+                  }                                                                            
 		
 		//	d->ticket_head++;                                                     
                 osp_spin_unlock(&d->mutex);                                           
                 
                 printk("read lock already granted\n");                               
-                printk("w: %d, r: %d, t: %d\n",d->writeLock,d->readLock,ticket);      
+		//                printk("w: %d, r: %d, t: %d\n",d->writeLock,d->readLock,ticket);      
                 
 		wait_event_interruptible(d->blockq,d->writeLock == 0 && ticket == d->ticket_tail);                                                   
 		printk("event in queue\n");                                           
 		
-                printk("block!\n");                                                   
+		//        printk("block!\n");                                                   
 		//    schedule();                                                           
-                printk("schedule\n");     	       
+		//    printk("schedule\n");     	       
 		if (signal_pending(current) == 1)
 		  return -ERESTARTSYS;
 	      }
@@ -370,10 +365,25 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
                 r = -EBUSY;
             else
             {   
-                osp_spin_lock(&d->mutex); 
-                d->writeLock = 1;
-                filp->f_flags |= F_OSPRD_LOCKED;
-                osp_spin_unlock(&d->mutex);
+	      if(filp_writable) {
+		if (d->readLock == 0 && d->writeLock == 0)
+		  {		
+		    osp_spin_lock(&d->mutex);
+		    d->writeLock = 1;
+		    filp->f_flags |= F_OSPRD_LOCKED;
+		    osp_spin_unlock(&d->mutex);
+		    printk("Write lock aquired after trying!\n");
+		  }
+	      }
+	      else {		
+		if (d->writeLock == 0)
+		  {
+		    osp_spin_lock(&d->mutex);
+		    d->readLock++;
+		    filp->f_flags |= F_OSPRD_LOCKED;		 
+		    osp_spin_unlock(&d->mutex);
+		  }  
+	      }
             }
 	} else if (cmd == OSPRDIOCRELEASE) {
 
