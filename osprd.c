@@ -169,9 +169,17 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 
 void checkDeadlock(struct file *filp, osprd_info_t *d)
 {
-   if (file2osprd(filp) == d)
+   if (file2osprd(filp) != NULL)
    {
-      d->deadlock++;
+      pidList_t curr = d->pidWaiting;
+     
+      while (curr != NULL && curr->next != NULL)
+      {
+          if (curr->pid == curr->next->pid)
+          {
+              printk("curr: %d curr next: %d", curr->pid, curr->next->pid);
+              d->deadlock = 1;
+      }
    }
 }
 
@@ -289,12 +297,12 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	   unsigned ticket = d->ticket_head++;
 	   osp_spin_unlock(&d->mutex);
 	 
-           for_each_open_file(current, checkDeadlock, d);
+/*           for_each_open_file(current, checkDeadlock, d);
            printk ("deadlock: %d \n", d->deadlock);
            printk ("locked: %d \n",  (filp->f_flags & F_OSPRD_LOCKED));
-           if (d->deadlock >= 2 && (filp->f_flags & F_OSPRD_LOCKED) == F_OSPRD_LOCKED)
+           if (d->deadlock >= 2 && (filp->f_flags & F_OSPRD_LOCKED) != 0)
                 return -EDEADLK;
-           
+ */         
            if (filp_writable)
            {
               printk("Request Write Lock\n"); 		
@@ -306,7 +314,26 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		    printk("time to acquire!\n");
 		    break;
 		  }
-			       
+	
+
+           /*     pidWaiting curr = kmalloc(sizeof(pidWaiting), GFP_ATOMIC);
+                curr->pid = current->pid;
+                curr->next = NULL;    
+            
+                if (d->pidWaiting = NULL)
+                    d->pidWaiting = curr
+                else 
+                {
+                    pidWaiting lastInList = d->pidWaiting;
+                    while (lastInList->next != NULL)
+                       lastInList = lastInList->next;
+                    lastInList->next = curr;
+                } */
+                 
+                for_each_open_file(current,checkDeadlock,d);
+                if (d->deadlock)
+                    r = -EDEADLK;		       
+
 		//	d->ticket_head++;
 		osp_spin_unlock(&d->mutex);	
 		printk("write lock already granted\n");
@@ -330,8 +357,6 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		  d->ticket_tail++;
 		  d->writeLock = 1;
                   filp->f_flags |= F_OSPRD_LOCKED;
-                  printk ("locked: %d \n",  (filp->f_flags & F_OSPRD_LOCKED));
-
                   //finish_wait(&d->blockq,&d->wait);
                   osp_spin_unlock(&d->mutex);
 		  printk("Write lock aquired!\n");
@@ -351,14 +376,28 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
                     printk("time to acquire!\n");                                     
                     break;                                                            
                   }                                                                            
-		
+                pidList_t curr = kmalloc(sizeof(pidList_t), GFP_ATOMIC);
+                curr->pid = current->pid;
+                curr->next = NULL;    
+            
+                if (d->pidWaiting == NULL)
+                    d->pidWaiting = curr;
+                else 
+                {
+                    pidList_t lastInList = d->pidWaiting;
+                    while (lastInList->next != NULL)
+                       lastInList = lastInList->next;
+                    lastInList->next = curr;
+                }
+ 		
 		//	d->ticket_head++;                                                     
                 osp_spin_unlock(&d->mutex);                                           
                 
                 printk("read lock already granted\n");                               
-		//                printk("w: %d, r: %d, t: %d\n",d->writeLock,d->readLock,ticket);      
+		//printk("w: %d, r: %d, t: %d\n",d->writeLock,d->readLock,ticket);      
                 
-		wait_event_interruptible(d->blockq,d->writeLock == 0 && ticket == d->ticket_tail);                                                   
+		wait_event_interruptible(d->blockq,d->writeLock == 0 && 
+                                                  ticket == d->ticket_tail);                                                   
 		printk("event in queue\n");                                           
 		
 		//        printk("block!\n");                                                   
@@ -369,7 +408,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 	      }
  
               if (d->writeLock == 0 && ticket == d->ticket_tail)
-		{
+	      {
 		  d->ticket_tail++;		 
 		  d->readLock++;
 		  filp->f_flags |= F_OSPRD_LOCKED;
@@ -453,7 +492,7 @@ static void osprd_setup(osprd_info_t *d)
         d->readLock = 0;
         d->writeLock = 0;
         d->pidWaiting = NULL;
-        d->deadlock; 
+        d->deadlock = 0; 
 }
 
 
