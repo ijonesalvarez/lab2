@@ -172,13 +172,15 @@ void checkDeadlock(struct file *filp, osprd_info_t *d)
    if (file2osprd(filp) != NULL)
    {
       pidList_t curr = d->pidWaiting;
-     
+
+      printk("check deadlock\n");     
       while (curr != NULL && curr->next != NULL)
       {
           if (curr->pid == curr->next->pid)
           {
               printk("curr: %d curr next: %d", curr->pid, curr->next->pid);
               d->deadlock = 1;
+          }
       }
    }
 }
@@ -316,24 +318,24 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		  }
 	
 
-           /*     pidWaiting curr = kmalloc(sizeof(pidWaiting), GFP_ATOMIC);
+                pidList_t curr = kmalloc(sizeof(pidList_t), GFP_ATOMIC);
                 curr->pid = current->pid;
                 curr->next = NULL;    
             
                 if (d->pidWaiting = NULL)
-                    d->pidWaiting = curr
+                    d->pidWaiting = curr;
                 else 
                 {
-                    pidWaiting lastInList = d->pidWaiting;
-                    while (lastInList->next != NULL)
-                       lastInList = lastInList->next;
-                    lastInList->next = curr;
-                } */
-                 
+                 //   pidList_t lastInList = d->pidWaiting;
+                 //   while (lastInList->next != NULL)
+                  //     lastInList = lastInList->next;
+                 //   lastInList->next = curr;
+                } 
+/*                 
                 for_each_open_file(current,checkDeadlock,d);
                 if (d->deadlock)
                     r = -EDEADLK;		       
-
+*/
 		//	d->ticket_head++;
 		osp_spin_unlock(&d->mutex);	
 		printk("write lock already granted\n");
@@ -376,7 +378,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
                     printk("time to acquire!\n");                                     
                     break;                                                            
                   }                                                                            
-                pidList_t curr = kmalloc(sizeof(pidList_t), GFP_ATOMIC);
+  /*              pidList_t curr = kmalloc(sizeof(pidList_t), GFP_ATOMIC);
                 curr->pid = current->pid;
                 curr->next = NULL;    
             
@@ -389,7 +391,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
                        lastInList = lastInList->next;
                     lastInList->next = curr;
                 }
- 		
+ */		
 		//	d->ticket_head++;                                                     
                 osp_spin_unlock(&d->mutex);                                           
                 
